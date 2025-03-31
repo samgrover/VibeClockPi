@@ -11,26 +11,21 @@ import OSLog // Add if you want logging within the view itself
 struct ClockView: View {
   // State to hold the iterator for Pi digits
   // We store the iterator itself to maintain its state across fetches
-  @State private var piteratorIterator = Piterator().makeAsyncIterator()
+  static private var piteratorIterator = Piterator().makeAsyncIterator()
 
   // State for the second hand's position (0-59)
   // Initialize lazily in .onAppear
-  @State private var currentSecond: Int = 0
+  @State private var currentDate: Date = DateComponents(calendar:.current,  year: 2025, month: 3, day: 14, hour: 3, minute: 14, second: 15).date ?? Date(timeIntervalSince1970: 3600)
 
   // Logger (optional, but good for debugging async stuff)
   private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClockApp", category: "ClockView")
 
   var body: some View {
     // TimelineView updates its content every second
-    TimelineView(.everySecond) { context in
+    TimelineView(.periodic(from: currentDate, by: 1)) { context in
       // Get current real time components from the context
       let date = context.date
       let calendar = Calendar.current
-      let components = calendar.dateComponents([.hour, .minute], from: date) // Only need hour/minute now
-
-      // Use optional chaining and provide defaults
-      let currentHour = components.hour ?? 0
-      let currentMinute = components.minute ?? 0
 
       Canvas { graphicsContext, size in
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -46,9 +41,9 @@ struct ClockView: View {
           context: graphicsContext,
           center: center,
           radius: radius,
-          hour: currentHour,
-          minute: currentMinute,
-          second: currentSecond // Use our state variable here
+          hour: calendar.component(.hour, from: currentDate),
+          minute: calendar.component(.minute, from: currentDate),
+          second: calendar.component(.second, from: currentDate)
         )
 
         // --- Optional: Draw Center Circle ---
@@ -64,7 +59,7 @@ struct ClockView: View {
       }
       // Trigger fetching the next Pi digit and updating the state *after* this frame renders
       // using the date provided by the TimelineView context as the trigger.
-      .onChange(of: date) { _ in // Use _ if newValue isn't needed directly
+      .onChange(of: date) { _,_ in // Use _ if newValue isn't needed directly
         Task {
           await fetchNextDigitAndUpdateSecond()
         }
@@ -75,8 +70,7 @@ struct ClockView: View {
       .padding()
     }
     .onAppear {
-      // Set the initial second hand position when the view appears
-      currentSecond = Calendar.current.component(.second, from: Date())
+      // currentDate = startDate
       // Optionally, kick off the first fetch immediately if desired,
       // though onChange will trigger very soon anyway.
       // Task { await fetchNextDigitAndUpdateSecond() }
@@ -87,14 +81,15 @@ struct ClockView: View {
   private func fetchNextDigitAndUpdateSecond() async {
     do {
       // Fetch the next digit from the iterator
-      if let piDigit = try await piteratorIterator.next() {
+      if let piDigit = try await ClockView.piteratorIterator.next() {
         Self.logger.debug("Fetched Pi digit: \(piDigit)")
         // Update the currentSecond state on the main thread
         // The new value wraps around using modulo 60
-        let newSecond = (currentSecond + piDigit) % 60
+//        let second = Calendar.current.component(.second, from: currentDate)
+//        let newSecond = (second + piDigit) % 60
         await MainActor.run { // Ensure UI updates happen on the main thread
-          currentSecond = newSecond
-          Self.logger.debug("Updated currentSecond to: \(currentSecond)")
+          currentDate = Calendar.current.date(byAdding: .second, value: piDigit, to: currentDate) ?? Date()
+          Self.logger.debug("Updated currentDate to: \(currentDate)")
         }
       } else {
         // Piterator finished or was cancelled
