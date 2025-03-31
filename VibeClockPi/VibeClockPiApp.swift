@@ -9,9 +9,9 @@ import SwiftUI
 
 @main
 struct VibeClockPiApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+  var body: some Scene {
+    WindowGroup {
+      ClockView()
     }
+  }
 }
