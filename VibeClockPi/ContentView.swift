@@ -6,43 +6,110 @@
 //
 
 import SwiftUI
+import OSLog // Add if you want logging within the view itself
 
 struct ClockView: View {
-  // Fixed time for this example
-  let hour: Int = 10
-  let minute: Int = 10
-  let second: Int = 30
+  // State to hold the iterator for Pi digits
+  // We store the iterator itself to maintain its state across fetches
+  @State private var piteratorIterator = Piterator().makeAsyncIterator()
+
+  // State for the second hand's position (0-59)
+  // Initialize lazily in .onAppear
+  @State private var currentSecond: Int = 0
+
+  // Logger (optional, but good for debugging async stuff)
+  private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClockApp", category: "ClockView")
 
   var body: some View {
-    Canvas { context, size in
-      let center = CGPoint(x: size.width / 2, y: size.height / 2)
-      // Use the smaller dimension for radius calculation, with some padding
-      let radius = min(size.width, size.height) / 2 * 0.9
+    // TimelineView updates its content every second
+    TimelineView(.everySecond) { context in
+      // Get current real time components from the context
+      let date = context.date
+      let calendar = Calendar.current
+      let components = calendar.dateComponents([.hour, .minute], from: date) // Only need hour/minute now
 
-      // --- Draw Tick Marks ---
-      drawTickMarks(context: context, center: center, radius: radius)
+      // Use optional chaining and provide defaults
+      let currentHour = components.hour ?? 0
+      let currentMinute = components.minute ?? 0
 
-      // --- Draw Hands ---
-      drawHands(context: context, center: center, radius: radius)
+      Canvas { graphicsContext, size in
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        // Use the smaller dimension for radius calculation, with some padding
+        let radius = min(size.width, size.height) / 2 * 0.9
 
-      // --- Optional: Draw Center Circle ---
-      let centerCircleRadius: CGFloat = radius * 0.05
-      let centerCircleRect = CGRect(
-        x: center.x - centerCircleRadius,
-        y: center.y - centerCircleRadius,
-        width: centerCircleRadius * 2,
-        height: centerCircleRadius * 2
-      )
-      context.fill(Path(ellipseIn: centerCircleRect), with: .color(.primary))
+        // --- Draw Tick Marks ---
+        drawTickMarks(context: graphicsContext, center: center, radius: radius)
 
+        // --- Draw Hands ---
+        // Pass the real hour/minute and the state-driven second
+        drawHands(
+          context: graphicsContext,
+          center: center,
+          radius: radius,
+          hour: currentHour,
+          minute: currentMinute,
+          second: currentSecond // Use our state variable here
+        )
+
+        // --- Optional: Draw Center Circle ---
+        let centerCircleRadius: CGFloat = radius * 0.05
+        let centerCircleRect = CGRect(
+          x: center.x - centerCircleRadius,
+          y: center.y - centerCircleRadius,
+          width: centerCircleRadius * 2,
+          height: centerCircleRadius * 2
+        )
+        graphicsContext.fill(Path(ellipseIn: centerCircleRect), with: .color(.primary))
+
+      }
+      // Trigger fetching the next Pi digit and updating the state *after* this frame renders
+      // using the date provided by the TimelineView context as the trigger.
+      .onChange(of: date) { _ in // Use _ if newValue isn't needed directly
+        Task {
+          await fetchNextDigitAndUpdateSecond()
+        }
+      }
+      // Optional: Add aspect ratio to keep it circular if desired
+      // .aspectRatio(1, contentMode: .fit)
+      // Optional: Add padding
+      .padding()
     }
-    // Optional: Add aspect ratio to keep it circular if desired
-    // .aspectRatio(1, contentMode: .fit)
-    // Optional: Add padding
-    .padding()
+    .onAppear {
+      // Set the initial second hand position when the view appears
+      currentSecond = Calendar.current.component(.second, from: Date())
+      // Optionally, kick off the first fetch immediately if desired,
+      // though onChange will trigger very soon anyway.
+      // Task { await fetchNextDigitAndUpdateSecond() }
+    }
   }
 
-  // Helper function to draw all tick marks
+  // Async function to get the next digit and update state
+  private func fetchNextDigitAndUpdateSecond() async {
+    do {
+      // Fetch the next digit from the iterator
+      if let piDigit = try await piteratorIterator.next() {
+        Self.logger.debug("Fetched Pi digit: \(piDigit)")
+        // Update the currentSecond state on the main thread
+        // The new value wraps around using modulo 60
+        let newSecond = (currentSecond + piDigit) % 60
+        await MainActor.run { // Ensure UI updates happen on the main thread
+          currentSecond = newSecond
+          Self.logger.debug("Updated currentSecond to: \(currentSecond)")
+        }
+      } else {
+        // Piterator finished or was cancelled
+        Self.logger.info("Piterator returned nil (finished or cancelled).")
+        // Decide what to do here: stop, loop, fetch from start?
+        // For now, it will just stop advancing.
+      }
+    } catch {
+      // Handle errors during fetch
+      Self.logger.error("Error fetching next Pi digit: \(error.localizedDescription)")
+      // Maybe set a default advancement or stop? For now, log and stop.
+    }
+  }
+
+  // Helper function to draw all tick marks (Unchanged)
   private func drawTickMarks(context: GraphicsContext, center: CGPoint, radius: CGFloat) {
     for i in 0..<60 {
       let angle = Angle.degrees(Double(i) * 6.0 - 90) // -90 to make 0 degrees point up
@@ -64,19 +131,26 @@ struct ClockView: View {
     }
   }
 
-  // Helper function to draw the clock hands
-  private func drawHands(context: GraphicsContext, center: CGPoint, radius: CGFloat) {
+  // Helper function to draw the clock hands - MODIFIED to take time components
+  private func drawHands(
+    context: GraphicsContext,
+    center: CGPoint,
+    radius: CGFloat,
+    hour: Int,    // Now a parameter
+    minute: Int,  // Now a parameter
+    second: Int   // Now a parameter
+  ) {
     // --- Calculate Hand Angles ---
     // Note: -90 degrees aligns 0 angle with the 12 o'clock position.
     //       Angles increase clockwise.
 
-    // Second Hand Angle
+    // Second Hand Angle (uses the passed-in 'second' which comes from state)
     let secondAngle = Angle.degrees(Double(second) / 60.0 * 360.0 - 90.0)
 
-    // Minute Hand Angle
+    // Minute Hand Angle (uses real minute)
     let minuteAngle = Angle.degrees(Double(minute) / 60.0 * 360.0 - 90.0)
 
-    // Hour Hand Angle (includes fractional part based on minutes)
+    // Hour Hand Angle (uses real hour/minute for fractional part)
     let hourAngle = Angle.degrees(
       (Double(hour % 12) + Double(minute) / 60.0) / 12.0 * 360.0 - 90.0
     )
@@ -114,14 +188,14 @@ struct ClockView: View {
     drawHand(
       context: context,
       center: center,
-      angle: secondAngle,
+      angle: secondAngle, // Uses the angle calculated from our state-driven 'second'
       length: secondHandLength,
       color: .red, // Specific color for second hand
       width: secondHandWidth
     )
   }
 
-  // Helper function to draw a single hand
+  // Helper function to draw a single hand (Unchanged)
   private func drawHand(
     context: GraphicsContext,
     center: CGPoint,
