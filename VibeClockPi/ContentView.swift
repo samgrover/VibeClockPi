@@ -15,7 +15,7 @@ struct ClockView: View {
 
   // State for the second hand's position (0-59)
   // Initialize lazily in .onAppear
-  @State private var currentDate: Date = DateComponents(calendar:.current,  year: 2025, month: 3, day: 14, hour: 3, minute: 14, second: 15).date ?? Date(timeIntervalSince1970: 3600)
+  @State private var currentDate: Date = DateComponents(calendar:.current,  year: 2025, month: 3, day: 14, hour: 3, minute: 14, second: 15).date ?? Date()
 
   // Logger (optional, but good for debugging async stuff)
   private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClockApp", category: "ClockView")
